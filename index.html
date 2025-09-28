@@ -2,10 +2,12 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <link rel="icon" type="image/svg+xml" href="./vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>ATS CV Optimizer</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Add Babel Standalone for in-browser JSX/TSX transpilation -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <script type="importmap">
 {
   "imports": {
@@ -21,6 +23,18 @@
 </head>
   <body>
     <div id="root"></div>
-    <script type="module" src="/index.tsx"></script>
+    <!-- Shim for process.env to prevent crash in browser environments -->
+    <script>
+      // This shim is required to prevent a "process is not defined" error
+      // when the @google/genai library is used in a browser-only environment
+      // without a build step (like Vite or Webpack). It allows the app to load
+      // without crashing. API calls will fail gracefully if an API key is not
+      // provided through a proper environment mechanism.
+      if (typeof process === 'undefined') {
+        window.process = { env: {} };
+      }
+    </script>
+    <!-- Change script type to text/babel and use a relative path for GitHub Pages compatibility -->
+    <script type="text/babel" data-type="module" src="./index.tsx"></script>
   </body>
 </html>
