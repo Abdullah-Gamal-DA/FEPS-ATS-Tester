@@ -1,4 +1,5 @@
 
+
 import React, { useState, useCallback, useMemo } from 'react';
 import ReactDOM from 'react-dom/client';
 import { GoogleGenAI } from "@google/genai";
@@ -128,9 +129,8 @@ const SOFT_SKILLS = [
 ];
 
 // --- START: Bundled File Reader Service ---
-// FIX: Specify Promise generic type and cast reader.result to fix type errors
-// where this function is consumed. This resolves errors related to lines 142 and 154.
 async function readFileAsArrayBuffer(file): Promise<ArrayBuffer> {
+    // FIX: Type the promise to resolve with ArrayBuffer and cast the result. This fixes downstream errors where an ArrayBuffer is expected.
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = () => resolve(reader.result as ArrayBuffer);
@@ -141,7 +141,8 @@ async function readFileAsArrayBuffer(file): Promise<ArrayBuffer> {
 
 async function readPdfFile(file) {
     const arrayBuffer = await readFileAsArrayBuffer(file);
-    const pdf = await getDocument({ data: arrayBuffer }).promise;
+    // FIX: pdfjs-dist getDocument expects data as Uint8Array, not ArrayBuffer directly.
+    const pdf = await getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
     let textContent = '';
     for (let i = 1; i <= pdf.numPages; i++) {
         const page = await pdf.getPage(i);
@@ -157,9 +158,8 @@ async function readDocxFile(file) {
     return result.value;
 }
 
-// FIX: Specify Promise generic type and cast reader.result to string to ensure
-// a string is returned, fixing the error related to line 557.
 async function readTxtFile(file): Promise<string> {
+    // FIX: Type the promise to resolve with a string and cast the result. This ensures type safety for consumers of this function.
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = () => resolve(reader.result as string);
@@ -340,14 +340,14 @@ const SECTIONS = {
     certifications: ["certifications", "certificates", "credentials", "licenses"]
 };
 
-// FIX: Added type annotation to `cvText` to prevent error on line 365.
-function getCvBaseMetrics(cvText: string) {
+function getCvBaseMetrics(cvText) {
     const wordCount = cvText.split(/\s+/).length;
     const measurablePatterns = [/\d+%/g, /\$\d+/g, /\d+k/g, /\d+m/g, /\d+\s*million/g, /increased.*\d+/g, /improved.*\d+/g, /reduced.*\d+/g, /achieved.*\d+/g, /exceeded.*\d+/g, /generated.*\d+/g, /\d+\s*years?\s+of\s+experience/g, /\d+\+\s*years?/g];
     const measurableCount = measurablePatterns.reduce((acc, pattern) => acc + (cvText.match(pattern) || []).length, 0);
     const foundSections = [];
     const cvLower = cvText.toLowerCase();
-    for (const section in SECTIONS) {
+    // FIX: Use a type-safe loop to iterate over SECTIONS keys. The `for...in` loop can cause type inference issues.
+    for (const section of Object.keys(SECTIONS) as Array<keyof typeof SECTIONS>) {
         if (SECTIONS[section].some(kw => cvLower.includes(kw))) {
             foundSections.push(section);
         }
@@ -419,7 +419,7 @@ function analyzeStandaloneCv(cvText) {
     let maxSkills = 0;
     for (const domain in SKILL_DOMAINS) {
         const domainKey = domain;
-        const skillsInDomain = enhancedSkillExtraction(cvText, SKILL_DOMAINS[domainKey]);
+        const skillsInDomain = enhancedSkillExtraction(cvText, SKILL_DOMAINS[domainKey as keyof typeof SKILL_DOMAINS]);
         detected_skills[domainKey] = skillsInDomain;
         if (skillsInDomain.length > maxSkills) {
             maxSkills = skillsInDomain.length;
@@ -543,19 +543,19 @@ const App = () => {
     const [standaloneResult, setStandaloneResult] = useState(null);
     const [isLoading, setIsLoading] = useState(false);
     const [loadingMessage, setLoadingMessage] = useState('');
-    const [error, setError] = useState<string | null>(null);
+    const [error, setError] = useState(null);
     const [optimizedCv, setOptimizedCv] = useState('');
     const [activeTab, setActiveTab] = useState('summary');
     const [copySuccess, setCopySuccess] = useState('');
 
-    const handleFileChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const handleFileChange = useCallback(async (e) => {
         const file = e.target.files?.[0];
         if (!file) return;
         setIsLoading(true);
         setLoadingMessage(`Reading ${file.name}...`);
         setError(null);
         try {
-            let content: string = '';
+            let content = '';
             const fileExtension = file.name.split('.').pop()?.toLowerCase();
             if (fileExtension === 'pdf') content = await readPdfFile(file);
             else if (fileExtension === 'docx') content = await readDocxFile(file);
