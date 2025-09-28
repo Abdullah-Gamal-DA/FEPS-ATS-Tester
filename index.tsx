@@ -127,19 +127,19 @@ const SOFT_SKILLS = [
 ];
 
 // --- START: Bundled File Reader Service ---
-async function readFileAsArrayBuffer(file: File): Promise<ArrayBuffer> {
+async function readFileAsArrayBuffer(file) {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
-        reader.onload = () => resolve(reader.result as ArrayBuffer);
+        reader.onload = () => resolve(reader.result);
         reader.onerror = (error) => reject(error);
         reader.readAsArrayBuffer(file);
     });
 }
 
-async function readPdfFile(file: File): Promise<string> {
+async function readPdfFile(file) {
     const arrayBuffer = await readFileAsArrayBuffer(file);
-    // FIX: No overload matches this call. The last overload gave the following error. Argument of type 'unknown' is not assignable to parameter of type 'ArrayBufferLike'.
-    const pdf = await getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
+    // FIX: Cast arrayBuffer to ArrayBuffer as it can be of type 'unknown' from the untyped readFileAsArrayBuffer function.
+    const pdf = await getDocument({ data: new Uint8Array(arrayBuffer as ArrayBuffer) }).promise;
     let textContent = '';
     for (let i = 1; i <= pdf.numPages; i++) {
         const page = await pdf.getPage(i);
@@ -149,17 +149,24 @@ async function readPdfFile(file: File): Promise<string> {
     return textContent;
 }
 
-async function readDocxFile(file: File): Promise<string> {
+async function readDocxFile(file) {
     const arrayBuffer = await readFileAsArrayBuffer(file);
-    // FIX: Type '{}' is missing the following properties from type 'ArrayBuffer': byteLength, slice, [Symbol.toStringTag]
-    const result = await mammoth.extractRawText({ arrayBuffer });
+    // FIX: Cast arrayBuffer to ArrayBuffer and pass it explicitly to avoid type errors.
+    const result = await mammoth.extractRawText({ arrayBuffer: arrayBuffer as ArrayBuffer });
     return result.value;
 }
 
-async function readTxtFile(file: File): Promise<string> {
+async function readTxtFile(file) {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
-        reader.onload = () => resolve(reader.result as string);
+        // FIX: Ensure that the promise resolves with a string to prevent type issues downstream.
+        reader.onload = () => {
+            if (typeof reader.result === 'string') {
+                resolve(reader.result);
+            } else {
+                reject(new Error("Failed to read file as text."));
+            }
+        };
         reader.onerror = (error) => reject(error);
         reader.readAsText(file);
     });
@@ -173,7 +180,7 @@ function getAiInstance() {
     return new GoogleGenAI({ apiKey: process.env.API_KEY });
 }
 
-async function detectJobDomain(jdContent: string): Promise<string> {
+async function detectJobDomain(jdContent) {
   const ai = getAiInstance();
   const domains = JOB_DOMAINS.join(', ');
 
@@ -204,7 +211,7 @@ async function detectJobDomain(jdContent: string): Promise<string> {
   }
 }
 
-async function optimizeCvWithGemini(cvContent: string, jdContent: string): Promise<string> {
+async function optimizeCvWithGemini(cvContent, jdContent) {
   const ai = getAiInstance();
   const optimization_prompt = `
     You are a professional CV optimization expert specializing in ATS (Applicant Tracking System) optimization.
@@ -242,7 +249,7 @@ async function optimizeCvWithGemini(cvContent: string, jdContent: string): Promi
 }
 
 // --- START: Bundled Analysis Service ---
-function normalize(text: string | null | undefined): string {
+function normalize(text) {
     let newText = String(text || '').toLowerCase();
     newText = newText.replace(/[_\-•,()[\]{}:;]/g, ' ');
     newText = newText.replace(/[/\\&]/g, ' ');
@@ -251,9 +258,9 @@ function normalize(text: string | null | undefined): string {
     return newText;
 }
 
-function tokenize(text: string): string[] {
+function tokenize(text) {
     const normalizedText = normalize(text);
-    const tokens = new Set<string>();
+    const tokens = new Set();
     const words = normalizedText.match(/[a-z0-9+#.%]+/g);
     if (words) {
         words.filter(w => !STOPWORDS.has(w) && w.length > 1).forEach(w => tokens.add(w));
@@ -274,7 +281,7 @@ function tokenize(text: string): string[] {
     return Array.from(tokens);
 }
 
-function levenshtein(a: string, b: string): number {
+function levenshtein(a, b) {
     const an = a.length;
     const bn = b.length;
     if (an === 0) return bn;
@@ -295,7 +302,7 @@ function levenshtein(a: string, b: string): number {
     return matrix[an][bn];
 }
 
-function fuzzyMatch(word: string, candidateList: string[], threshold = 0.80): boolean {
+function fuzzyMatch(word, candidateList, threshold = 0.80) {
     const wordNormalized = normalize(word);
     for (const candidate of candidateList) {
         const candidateNormalized = normalize(candidate);
@@ -309,8 +316,8 @@ function fuzzyMatch(word: string, candidateList: string[], threshold = 0.80): bo
     return false;
 }
 
-function enhancedSkillExtraction(text: string, skillList: string[]): string[] {
-    const foundSkills = new Set<string>();
+function enhancedSkillExtraction(text, skillList) {
+    const foundSkills = new Set();
     const textNormalized = normalize(text);
     const textTokens = new Set(tokenize(text));
     for (const skill of skillList) {
@@ -337,14 +344,13 @@ const SECTIONS = {
     certifications: ["certifications", "certificates", "credentials", "licenses"]
 };
 
-function getCvBaseMetrics(cvText: string) {
+function getCvBaseMetrics(cvText) {
     const wordCount = cvText.split(/\s+/).length;
     const measurablePatterns = [/\d+%/g, /\$\d+/g, /\d+k/g, /\d+m/g, /\d+\s*million/g, /increased.*\d+/g, /improved.*\d+/g, /reduced.*\d+/g, /achieved.*\d+/g, /exceeded.*\d+/g, /generated.*\d+/g, /\d+\s*years?\s+of\s+experience/g, /\d+\+\s*years?/g];
-    // FIX: Property 'length' does not exist on type 'unknown'.
     const measurableCount = measurablePatterns.reduce((acc, pattern) => acc + (cvText.match(pattern) || []).length, 0);
-    const foundSections: string[] = [];
+    const foundSections = [];
     const cvLower = cvText.toLowerCase();
-    for (const section of Object.keys(SECTIONS)) {
+    for (const section in SECTIONS) {
         if (SECTIONS[section].some(kw => cvLower.includes(kw))) {
             foundSections.push(section);
         }
@@ -352,7 +358,7 @@ function getCvBaseMetrics(cvText: string) {
     return { wordCount, measurableCount, foundSections };
 }
 
-function analyzeCv(cvText: string, jdText: string, domain: string) {
+function analyzeCv(cvText, jdText, domain) {
     const cvTokens = new Set(tokenize(cvText));
     const jdTokens = new Set(tokenize(jdText));
     const domainHardSkills = [...new Set([...SKILL_DOMAINS[domain], ...SKILL_DOMAINS.GENERAL_TECH])];
@@ -362,7 +368,7 @@ function analyzeCv(cvText: string, jdText: string, domain: string) {
     const missingHard = relevantHard.filter(s => !foundHard.includes(s));
     const foundSoft = enhancedSkillExtraction(cvText, relevantSoft);
     const missingSoft = relevantSoft.filter(s => !foundSoft.includes(s));
-    const present: string[] = [], missing: string[] = [], fuzzy: string[] = [];
+    const present = [], missing = [], fuzzy = [];
     jdTokens.forEach(kw => {
         if (kw.length < 3) return;
         if (cvTokens.has(kw)) {
@@ -407,7 +413,7 @@ function analyzeCv(cvText: string, jdText: string, domain: string) {
     };
 }
 
-function analyzeStandaloneCv(cvText: string) {
+function analyzeStandaloneCv(cvText) {
     const formattingResult = analyzeFormatting(cvText);
     const { wordCount, measurableCount, foundSections } = getCvBaseMetrics(cvText);
     const sections_missing = Object.keys(SECTIONS).filter(s => !foundSections.includes(s));
@@ -415,7 +421,7 @@ function analyzeStandaloneCv(cvText: string) {
     let top_skill_domain = 'N/A';
     let maxSkills = 0;
     for (const domain in SKILL_DOMAINS) {
-        const domainKey = domain as keyof typeof SKILL_DOMAINS;
+        const domainKey = domain;
         const skillsInDomain = enhancedSkillExtraction(cvText, SKILL_DOMAINS[domainKey]);
         detected_skills[domainKey] = skillsInDomain;
         if (skillsInDomain.length > maxSkills) {
@@ -426,7 +432,7 @@ function analyzeStandaloneCv(cvText: string) {
     return { formattingResult, word_count: wordCount, measurable_count: measurableCount, sections_found: foundSections, sections_missing: sections_missing, top_skill_domain, detected_skills };
 }
 
-function analyzeFormatting(cvText: string) {
+function analyzeFormatting(cvText) {
     const lines = cvText.split('\n');
     const nonEmptyLines = lines.filter(line => line.trim());
     const paragraphs = cvText.split('\n\n').filter(p => p.trim());
@@ -445,8 +451,8 @@ function analyzeFormatting(cvText: string) {
     };
 }
 
-function generateImprovementTips(analysisResult: any, formattingResult: any): string[] {
-    const tips: string[] = [];
+function generateImprovementTips(analysisResult, formattingResult) {
+    const tips = [];
     if (analysisResult.issues.hard_skills > 0) tips.push(`Add these key technical skills: ${analysisResult.hard_skills_missing.slice(0, 5).join(', ')}`);
     if (analysisResult.issues.soft_skills > 0) tips.push(`Include these soft skills: ${analysisResult.soft_skills_missing.slice(0, 3).join(', ')}`);
     if (analysisResult.measurable_count < 3) tips.push("Add more quantified achievements (e.g., %, $, numbers).");
@@ -462,7 +468,7 @@ function generateImprovementTips(analysisResult: any, formattingResult: any): st
     return tips;
 }
 
-function generateComprehensiveReport(analysisResult: any, formattingResult: any): string {
+function generateComprehensiveReport(analysisResult, formattingResult) {
     const { final_score, keywords_present, keywords_missing, hard_skills_found, hard_skills_missing, soft_skills_found, soft_skills_missing, measurable_count, word_count, sections_found, issues } = analysisResult;
     const sections = [
         `# CV Analysis Report`, `## 1. Overall ATS Compatibility Score: ${final_score}%`,
@@ -483,7 +489,7 @@ const IconAnalyze = () => <svg xmlns="http://www.w3.org/2000/svg" className="h-5
 const IconOptimize = () => <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor"><path d="M5 4a2 2 0 012-2h6a2 2 0 012 2v14l-5-2.5L5 18V4z" /></svg>;
 const IconCopy = () => <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2" viewBox="0 0 20 20" fill="currentColor"><path d="M7 9a2 2 0 012-2h6a2 2 0 012 2v6a2 2 0 01-2 2H9a2 2 0 01-2-2V9z" /><path d="M5 3a2 2 0 00-2 2v6a2 2 0 002 2V5h6a2 2 0 00-2-2H5z" /></svg>;
 
-const Loader = ({ message }: { message: string }) => (
+const Loader = ({ message }) => (
     <div className="absolute inset-0 bg-slate-200 bg-opacity-60 flex items-center justify-center z-50 backdrop-blur-sm">
         <div className="flex flex-col items-center text-center p-4">
             <svg className="animate-spin h-10 w-10 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -496,10 +502,10 @@ const Loader = ({ message }: { message: string }) => (
     </div>
 );
 
-const ScoreGauge = ({ score }: { score: number }) => {
-    const getScoreColor = (s: number) => s >= 85 ? 'text-emerald-500' : s >= 70 ? 'text-amber-500' : 'text-red-500';
-    const getScoreRingColor = (s: number) => s >= 85 ? 'stroke-emerald-500' : s >= 70 ? 'stroke-amber-500' : 'stroke-red-500';
-    const getScoreStatus = (s: number) => s >= 85 ? 'Excellent' : s >= 70 ? 'Good' : s >= 50 ? 'Fair' : 'Needs Work';
+const ScoreGauge = ({ score }) => {
+    const getScoreColor = (s) => s >= 85 ? 'text-emerald-500' : s >= 70 ? 'text-amber-500' : 'text-red-500';
+    const getScoreRingColor = (s) => s >= 85 ? 'stroke-emerald-500' : s >= 70 ? 'stroke-amber-500' : 'stroke-red-500';
+    const getScoreStatus = (s) => s >= 85 ? 'Excellent' : s >= 70 ? 'Good' : s >= 50 ? 'Fair' : 'Needs Work';
     const radius = 80;
     const circumference = 2 * Math.PI * radius;
     const offset = circumference - (score / 100) * circumference;
@@ -518,8 +524,8 @@ const ScoreGauge = ({ score }: { score: number }) => {
     );
 };
 
-const ProgressBar = ({ value, label }: { value: number, label: string }) => {
-    const getBarColor = (v: number) => v >= 85 ? 'bg-emerald-500' : v >= 70 ? 'bg-amber-500' : 'bg-red-500';
+const ProgressBar = ({ value, label }) => {
+    const getBarColor = (v) => v >= 85 ? 'bg-emerald-500' : v >= 70 ? 'bg-amber-500' : 'bg-red-500';
     return (
         <div className="mb-4">
             <div className="flex justify-between items-center mb-1">
@@ -535,30 +541,29 @@ const App = () => {
     const [mode, setMode] = useState('comparison');
     const [jdText, setJdText] = useState('');
     const [cvText, setCvText] = useState('');
-    const [comparisonResult, setComparisonResult] = useState<any>(null);
-    const [formattingResult, setFormattingResult] = useState<any>(null);
-    const [standaloneResult, setStandaloneResult] = useState<any>(null);
+    const [comparisonResult, setComparisonResult] = useState(null);
+    const [formattingResult, setFormattingResult] = useState(null);
+    const [standaloneResult, setStandaloneResult] = useState(null);
     const [isLoading, setIsLoading] = useState(false);
     const [loadingMessage, setLoadingMessage] = useState('');
-    const [error, setError] = useState<string | null>(null);
+    const [error, setError] = useState(null);
     const [optimizedCv, setOptimizedCv] = useState('');
     const [activeTab, setActiveTab] = useState('summary');
     const [copySuccess, setCopySuccess] = useState('');
 
-    const handleFileChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const handleFileChange = useCallback(async (e) => {
         const file = e.target.files?.[0];
         if (!file) return;
         setIsLoading(true);
         setLoadingMessage(`Reading ${file.name}...`);
         setError(null);
         try {
-            let content = '';
+            let content: string = '';
             const fileExtension = file.name.split('.').pop()?.toLowerCase();
             if (fileExtension === 'pdf') content = await readPdfFile(file);
             else if (fileExtension === 'docx') content = await readDocxFile(file);
             else if (fileExtension === 'txt') content = await readTxtFile(file);
             else throw new Error("Unsupported file type. Please upload a PDF, DOCX, or TXT file.");
-            // FIX: Type 'unknown' is not assignable to type 'string'.
             setCvText(content);
         } catch (err) {
             if (err instanceof Error) {
@@ -676,7 +681,7 @@ const App = () => {
             switch (activeTab) {
                 case 'summary': return <div className="p-6 space-y-4"><h3 className="text-xl font-bold text-slate-800">Analysis Summary</h3><p><strong>Overall ATS Score:</strong> <span className="font-bold text-blue-600">{comparisonResult.final_score}%</span></p><p><strong>Keyword Match:</strong> {comparisonResult.keywords_present.length} found, {comparisonResult.keywords_missing.length} missing.</p><p><strong>Hard Skills Match:</strong> {comparisonResult.hard_skills_found.length} / {comparisonResult.hard_skills_found.length + comparisonResult.hard_skills_missing.length}</p><p><strong>Quantified Achievements:</strong> {comparisonResult.measurable_count} found.</p></div>;
                 case 'report': return <div className="p-6"><div className="flex justify-between items-center mb-4"><h3 className="text-xl font-bold text-slate-800">Comprehensive Report</h3><button onClick={handleCopyReport} className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"><IconCopy /> {copySuccess || 'Copy Report'}</button></div><textarea readOnly value={comprehensiveReport} className="w-full h-[60vh] p-3 font-mono text-sm border border-slate-300 rounded-md bg-slate-50 text-slate-800" placeholder="Generating report..."></textarea></div>;
-                case 'skills': return <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6"><div><h4 className="text-lg font-semibold text-slate-700 mb-2">Hard Skills</h4><p className="text-sm mb-2 text-slate-500">Found: {comparisonResult.hard_skills_found.length}, Missing: {comparisonResult.hard_skills_missing.length}</p><h5 className="font-semibold text-emerald-600">Found:</h5><ul className="list-disc list-inside text-sm text-slate-600 max-h-48 overflow-y-auto bg-slate-50 p-2 rounded">{comparisonResult.hard_skills_found.map((s: string) => <li key={s}>{s}</li>)}</ul><h5 className="font-semibold text-red-600 mt-4">Missing:</h5><ul className="list-disc list-inside text-sm text-slate-600 max-h-48 overflow-y-auto bg-slate-50 p-2 rounded">{comparisonResult.hard_skills_missing.map((s: string) => <li key={s}>{s}</li>)}</ul></div><div><h4 className="text-lg font-semibold text-slate-700 mb-2">Soft Skills</h4><p className="text-sm mb-2 text-slate-500">Found: {comparisonResult.soft_skills_found.length}, Missing: {comparisonResult.soft_skills_missing.length}</p><h5 className="font-semibold text-emerald-600">Found:</h5><ul className="list-disc list-inside text-sm text-slate-600 max-h-48 overflow-y-auto bg-slate-50 p-2 rounded">{comparisonResult.soft_skills_found.map((s: string) => <li key={s}>{s}</li>)}</ul><h5 className="font-semibold text-red-600 mt-4">Missing:</h5><ul className="list-disc list-inside text-sm text-slate-600 max-h-48 overflow-y-auto bg-slate-50 p-2 rounded">{comparisonResult.soft_skills_missing.map((s: string) => <li key={s}>{s}</li>)}</ul></div></div>;
+                case 'skills': return <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6"><div><h4 className="text-lg font-semibold text-slate-700 mb-2">Hard Skills</h4><p className="text-sm mb-2 text-slate-500">Found: {comparisonResult.hard_skills_found.length}, Missing: {comparisonResult.hard_skills_missing.length}</p><h5 className="font-semibold text-emerald-600">Found:</h5><ul className="list-disc list-inside text-sm text-slate-600 max-h-48 overflow-y-auto bg-slate-50 p-2 rounded">{comparisonResult.hard_skills_found.map((s) => <li key={s}>{s}</li>)}</ul><h5 className="font-semibold text-red-600 mt-4">Missing:</h5><ul className="list-disc list-inside text-sm text-slate-600 max-h-48 overflow-y-auto bg-slate-50 p-2 rounded">{comparisonResult.hard_skills_missing.map((s) => <li key={s}>{s}</li>)}</ul></div><div><h4 className="text-lg font-semibold text-slate-700 mb-2">Soft Skills</h4><p className="text-sm mb-2 text-slate-500">Found: {comparisonResult.soft_skills_found.length}, Missing: {comparisonResult.soft_skills_missing.length}</p><h5 className="font-semibold text-emerald-600">Found:</h5><ul className="list-disc list-inside text-sm text-slate-600 max-h-48 overflow-y-auto bg-slate-50 p-2 rounded">{comparisonResult.soft_skills_found.map((s) => <li key={s}>{s}</li>)}</ul><h5 className="font-semibold text-red-600 mt-4">Missing:</h5><ul className="list-disc list-inside text-sm text-slate-600 max-h-48 overflow-y-auto bg-slate-50 p-2 rounded">{comparisonResult.soft_skills_missing.map((s) => <li key={s}>{s}</li>)}</ul></div></div>;
                 case 'recommendations': return <div className="p-6"><h3 className="text-xl font-bold text-slate-800 mb-4">Improvement Tips</h3><ul className="space-y-3">{improvementTips.map((tip, index) => (<li key={index} className="flex items-start p-3 bg-blue-50 rounded-lg"><span className="mr-3 text-blue-500">💡</span><span className="text-slate-700">{tip}</span></li>))}</ul></div>;
                 case 'optimized': return <div className="p-6"><h3 className="text-xl font-bold text-slate-800 mb-4">AI Optimized CV</h3>{optimizedCv ? <pre className="whitespace-pre-wrap font-sans text-sm bg-slate-50 p-4 rounded-md border border-slate-200 max-h-[60vh] overflow-y-auto">{optimizedCv}</pre> : <p className="text-slate-500">Click "AI Optimize" to generate an enhanced version of your CV.</p>}</div>;
                 default: return null;
