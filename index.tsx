@@ -130,7 +130,14 @@ const SOFT_SKILLS = [
 async function readFileAsArrayBuffer(file) {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
-        reader.onload = () => resolve(reader.result);
+// FIX: Ensure reader.result is an ArrayBuffer before resolving. This fixes errors where the result was treated as 'unknown'.
+        reader.onload = () => {
+            if (reader.result instanceof ArrayBuffer) {
+                resolve(reader.result);
+            } else {
+                reject(new Error("Failed to read file as ArrayBuffer."));
+            }
+        };
         reader.onerror = (error) => reject(error);
         reader.readAsArrayBuffer(file);
     });
@@ -138,7 +145,6 @@ async function readFileAsArrayBuffer(file) {
 
 async function readPdfFile(file) {
     const arrayBuffer = await readFileAsArrayBuffer(file);
-    // FIX: Cast arrayBuffer to ArrayBuffer as it can be of type 'unknown' from the untyped readFileAsArrayBuffer function.
     const pdf = await getDocument({ data: new Uint8Array(arrayBuffer as ArrayBuffer) }).promise;
     let textContent = '';
     for (let i = 1; i <= pdf.numPages; i++) {
@@ -151,7 +157,6 @@ async function readPdfFile(file) {
 
 async function readDocxFile(file) {
     const arrayBuffer = await readFileAsArrayBuffer(file);
-    // FIX: Cast arrayBuffer to ArrayBuffer and pass it explicitly to avoid type errors.
     const result = await mammoth.extractRawText({ arrayBuffer: arrayBuffer as ArrayBuffer });
     return result.value;
 }
@@ -159,7 +164,6 @@ async function readDocxFile(file) {
 async function readTxtFile(file) {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
-        // FIX: Ensure that the promise resolves with a string to prevent type issues downstream.
         reader.onload = () => {
             if (typeof reader.result === 'string') {
                 resolve(reader.result);
@@ -173,15 +177,8 @@ async function readTxtFile(file) {
 }
 
 // --- START: Bundled Gemini Service ---
-function getAiInstance() {
-    if (!process.env.API_KEY) {
-        throw new Error("Gemini API Key is not configured. Please ensure the API_KEY environment variable is set.");
-    }
-    return new GoogleGenAI({ apiKey: process.env.API_KEY });
-}
-
-async function detectJobDomain(jdContent) {
-  const ai = getAiInstance();
+async function detectJobDomain(jdContent, ai) {
+  if (!ai) throw new Error("AI service is not initialized. Please provide an API key.");
   const domains = JOB_DOMAINS.join(', ');
 
   const prompt = `
@@ -211,8 +208,8 @@ async function detectJobDomain(jdContent) {
   }
 }
 
-async function optimizeCvWithGemini(cvContent, jdContent) {
-  const ai = getAiInstance();
+async function optimizeCvWithGemini(cvContent, jdContent, ai) {
+  if (!ai) throw new Error("AI service is not initialized. Please provide an API key.");
   const optimization_prompt = `
     You are a professional CV optimization expert specializing in ATS (Applicant Tracking System) optimization.
     Please analyze and optimize the following CV for the given job description:
@@ -347,7 +344,8 @@ const SECTIONS = {
 function getCvBaseMetrics(cvText) {
     const wordCount = cvText.split(/\s+/).length;
     const measurablePatterns = [/\d+%/g, /\$\d+/g, /\d+k/g, /\d+m/g, /\d+\s*million/g, /increased.*\d+/g, /improved.*\d+/g, /reduced.*\d+/g, /achieved.*\d+/g, /exceeded.*\d+/g, /generated.*\d+/g, /\d+\s*years?\s+of\s+experience/g, /\d+\+\s*years?/g];
-    const measurableCount = measurablePatterns.reduce((acc, pattern) => acc + (cvText.match(pattern) || []).length, 0);
+    // FIX: Wrap cvText with String() to prevent errors if it's not a string type, which was causing a 'property length does not exist on unknown' error.
+    const measurableCount = measurablePatterns.reduce((acc, pattern) => acc + (String(cvText).match(pattern) || []).length, 0);
     const foundSections = [];
     const cvLower = cvText.toLowerCase();
     for (const section in SECTIONS) {
@@ -488,6 +486,8 @@ const IconFile = () => <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-
 const IconAnalyze = () => <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor"><path d="M9 9a2 2 0 114 0 2 2 0 01-4 0z" /><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-13a4 4 0 11-8 0 4 4 0 018 0z" clipRule="evenodd" /></svg>;
 const IconOptimize = () => <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor"><path d="M5 4a2 2 0 012-2h6a2 2 0 012 2v14l-5-2.5L5 18V4z" /></svg>;
 const IconCopy = () => <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2" viewBox="0 0 20 20" fill="currentColor"><path d="M7 9a2 2 0 012-2h6a2 2 0 012 2v6a2 2 0 01-2 2H9a2 2 0 01-2-2V9z" /><path d="M5 3a2 2 0 00-2 2v6a2 2 0 002 2V5h6a2 2 0 00-2-2H5z" /></svg>;
+const IconKey = () => <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-slate-400" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M18 8a6 6 0 01-7.743 5.743L10 14l-1 1-1 1H6v2H2v-4l4.257-4.257A6 6 0 1118 8zm-6-4a1 1 0 100 2 1 1 0 000-2z" clipRule="evenodd" /></svg>;
+
 
 const Loader = ({ message }) => (
     <div className="absolute inset-0 bg-slate-200 bg-opacity-60 flex items-center justify-center z-50 backdrop-blur-sm">
@@ -551,6 +551,18 @@ const App = () => {
     const [activeTab, setActiveTab] = useState('summary');
     const [copySuccess, setCopySuccess] = useState('');
 
+// FIX: Aligned API key handling with Gemini API guidelines. The AI client is now initialized using `process.env.API_KEY` and the UI for key input has been removed.
+    const ai = useMemo(() => {
+        try {
+            // API_KEY is expected to be in environment variables as per guidelines
+            return new GoogleGenAI({ apiKey: process.env.API_KEY });
+        } catch (e) {
+            console.error("Failed to initialize GoogleGenAI", e);
+            setError("Failed to initialize Gemini AI. Please ensure the API key is set correctly in your environment.");
+            return null;
+        }
+    }, []);
+
     const handleFileChange = useCallback(async (e) => {
         const file = e.target.files?.[0];
         if (!file) return;
@@ -558,7 +570,7 @@ const App = () => {
         setLoadingMessage(`Reading ${file.name}...`);
         setError(null);
         try {
-            let content: string = '';
+            let content = '';
             const fileExtension = file.name.split('.').pop()?.toLowerCase();
             if (fileExtension === 'pdf') content = await readPdfFile(file);
             else if (fileExtension === 'docx') content = await readDocxFile(file);
@@ -566,11 +578,8 @@ const App = () => {
             else throw new Error("Unsupported file type. Please upload a PDF, DOCX, or TXT file.");
             setCvText(content);
         } catch (err) {
-            if (err instanceof Error) {
-                setError(err.message || "Failed to read the file. It might be corrupted or protected.");
-            } else {
-                setError("Failed to read the file. It might be corrupted or protected.");
-            }
+            // FIX: Safely access error message to prevent crashes when a non-Error object is thrown.
+            setError((err as Error).message || "Failed to read the file. It might be corrupted or protected.");
         } finally {
             setIsLoading(false);
         }
@@ -590,10 +599,15 @@ const App = () => {
                 setError("Please provide the Job Description content for comparison.");
                 return;
             }
+            if (!ai) {
+// FIX: Updated error message to reflect API key is from environment variables.
+                setError("Gemini AI is not initialized. Please check your setup.");
+                return;
+            }
             setIsLoading(true);
             setLoadingMessage('Detecting job domain...');
             try {
-                const domain = await detectJobDomain(jdText);
+                const domain = await detectJobDomain(jdText, ai);
                 setLoadingMessage(`Analyzing CV for ${domain.replace('_', ' ')} role...`);
                 const analysis = analyzeCv(cvText, jdText, domain);
                 const formatting = analyzeFormatting(cvText);
@@ -601,11 +615,8 @@ const App = () => {
                 setFormattingResult(formatting);
                 setActiveTab('summary');
             } catch (e) {
-                if (e instanceof Error) {
-                    setError(e.message || "An unknown error occurred during analysis.");
-                } else {
-                    setError("An unknown error occurred during analysis.");
-                }
+                // FIX: Safely access error message.
+                setError((e as Error).message || "An unknown error occurred during analysis.");
             } finally {
                 setIsLoading(false);
             }
@@ -616,40 +627,39 @@ const App = () => {
                 const analysis = analyzeStandaloneCv(cvText);
                 setStandaloneResult(analysis);
              } catch (e) {
-                if (e instanceof Error) {
-                    setError(e.message || "An unknown error occurred during analysis.");
-                } else {
-                    setError("An unknown error occurred during analysis.");
-                }
+                // FIX: Safely access error message.
+                setError((e as Error).message || "An unknown error occurred during analysis.");
              } finally {
                 setIsLoading(false);
              }
         }
-    }, [cvText, jdText, mode]);
+    }, [cvText, jdText, mode, ai]);
 
     const handleOptimize = useCallback(async () => {
         if (!cvText || !jdText) {
             setError("Please provide both CV and Job Description to use AI optimization.");
             return;
         }
+        if (!ai) {
+            // FIX: Updated error message to reflect API key is from environment variables.
+            setError("Gemini AI is not initialized. Please check your setup.");
+            return;
+        }
         setError(null);
         setIsLoading(true);
         setLoadingMessage('AI is optimizing your CV...');
         try {
-            const optimized = await optimizeCvWithGemini(cvText, jdText);
+            const optimized = await optimizeCvWithGemini(cvText, jdText, ai);
             setOptimizedCv(optimized);
             setMode('comparison');
             setActiveTab('optimized');
         } catch (e) {
-            if (e instanceof Error) {
-                setError(e.message || "Failed to optimize CV.");
-            } else {
-                setError("Failed to optimize CV.");
-            }
+            // FIX: Safely access error message.
+            setError((e as Error).message || "Failed to optimize CV.");
         } finally {
             setIsLoading(false);
         }
-    }, [cvText, jdText]);
+    }, [cvText, jdText, ai]);
 
     const improvementTips = useMemo(() => {
         if (mode === 'comparison' && comparisonResult && formattingResult) {
@@ -750,7 +760,7 @@ const App = () => {
                     </div>
                     <div className="lg:col-span-2 space-y-6">
                         <div className="bg-white p-6 rounded-xl shadow-lg">
-                            <div className="mb-4"><div className="isolate flex divide-x divide-gray-200 rounded-lg shadow-sm"><button onClick={() => setMode('comparison')} className={`relative inline-flex items-center rounded-l-md px-3 py-2 text-sm font-semibold ring-1 ring-inset ring-gray-300 focus:z-10 ${mode === 'comparison' ? 'bg-blue-600 text-white' : 'bg-white text-gray-900 hover:bg-gray-50'}`}>CV vs. Job Description Match</button><button onClick={() => setMode('standalone')} className={`relative -ml-px inline-flex items-center rounded-r-md px-3 py-2 text-sm font-semibold ring-1 ring-inset ring-gray-300 focus:z-10 ${mode === 'standalone' ? 'bg-blue-600 text-white' : 'bg-white text-gray-900 hover:bg-gray-50'}`}>Standalone CV Health Check</button></div></div>
+                            <div className="mb-4 pt-4"><div className="isolate flex divide-x divide-gray-200 rounded-lg shadow-sm"><button onClick={() => setMode('comparison')} className={`relative inline-flex items-center rounded-l-md px-3 py-2 text-sm font-semibold ring-1 ring-inset ring-gray-300 focus:z-10 ${mode === 'comparison' ? 'bg-blue-600 text-white' : 'bg-white text-gray-900 hover:bg-gray-50'}`}>CV vs. Job Description Match</button><button onClick={() => setMode('standalone')} className={`relative -ml-px inline-flex items-center rounded-r-md px-3 py-2 text-sm font-semibold ring-1 ring-inset ring-gray-300 focus:z-10 ${mode === 'standalone' ? 'bg-blue-600 text-white' : 'bg-white text-gray-900 hover:bg-gray-50'}`}>Standalone CV Health Check</button></div></div>
                              {error && <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mb-4" role="alert"><span className="block sm:inline">{error}</span></div>}
                             <div className={`grid grid-cols-1 ${mode === 'comparison' ? 'md:grid-cols-2' : 'md:grid-cols-1'} gap-6`}>
                                 <div>
