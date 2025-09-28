@@ -1,0 +1,5 @@
+{
+  "name": "ATS CV Optimizer",
+  "description": "A web application that analyzes your CV against a job description, provides an ATS compatibility score, and uses the Gemini API to suggest improvements and generate an optimized version of your CV.",
+  "requestFramePermissions": []
+}
